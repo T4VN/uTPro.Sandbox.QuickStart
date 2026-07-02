@@ -1,0 +1,48 @@
+# ==========================================================================
+#  uTPro Sandbox (SQLite) - keep the repo to just the launcher + docs.
+#  Everything the launcher downloads, extracts, generates or runs is ignored
+#  so `git status` stays clean after download / extract / run / install.
+# ==========================================================================
+
+# --- Downloaded uTPro release publish output (created at run time) ---
+publish/
+
+# --- Locally installed .NET runtime (fetched by the launcher if missing) ---
+.dotnet/
+
+# --- Downloaded installers / archives ---
+publish_output*.zip
+*.zip
+dotnet-install.ps1
+dotnet-install.sh
+
+# --- SQLite database files (created on first install) ---
+*.sqlite
+*.sqlite.db
+*.sqlite.db-shm
+*.sqlite.db-wal
+*.sqlite.db-shp
+*.db
+*.db-journal
+
+# --- Umbraco runtime data / caches / logs (anywhere) ---
+**/umbraco/Data/
+**/umbraco/Logs/
+**/umbraco/mediacache/
+**/umbraco/models/
+**/App_Data/
+**/wwwroot/media/
+**/App_Plugins/**/tmp/
+
+# --- Generic build / log output ---
+[Bb]in/
+[Oo]bj/
+*.log
+
+# --- OS / editor cruft ---
+.vs/
+.idea/
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
