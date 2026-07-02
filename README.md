@@ -5,9 +5,10 @@ instead of SQL Server, so you can try the full uTPro site on **Windows, macOS or
 without installing a database server.
 
 Instead of building from source, the launcher downloads the **pre-built publish asset**
-from the latest stable uTPro GitHub release (`publish_output*.zip`), points it at a local
-SQLite database, and runs it. No .NET SDK and no build step are required - only the
-**.NET 10 runtime** (which the launcher installs locally if it is missing).
+from the latest stable uTPro GitHub release (`publish_output*.zip`), asks a few optional
+configuration questions, points it at a database (SQLite by default), and runs it. No .NET
+SDK and no build step are required - only the **.NET 10 runtime** (which the launcher
+installs locally if it is missing).
 
 > **Requires .NET 10.** uTPro is moving to Umbraco 17 on .NET 10, so the launcher
 > requires a .NET 10 runtime. While the current release still targets .NET 9, it runs on
@@ -48,12 +49,15 @@ chmod +x run.sh
 ./run.sh
 ```
 
-Then open **http://localhost:5000/umbraco** and complete the first-time install wizard.
-The database is an empty SQLite file, so you install from scratch; uTPro's uSync content
-is imported on first boot.
+On the **first run** the launcher asks a few questions (see [Configuration](#configuration)).
+Press Enter on every question to accept the safe defaults (SQLite, `localhost`, no SMTP,
+manual install wizard). Your answers are saved so later runs never ask again.
 
-The **second** time you run the script it detects the existing `publish/` output and just
-starts the website again (no re-download), keeping any data you created.
+Then open **http://localhost:5000/umbraco**. If you did not set up an admin automatically,
+complete the first-time install wizard; uTPro's uSync content is imported on first boot.
+
+The **second** time you run the script it reuses your saved configuration and the existing
+`publish/` output and just starts the website again (no questions, no re-download).
 
 ---
 
@@ -62,12 +66,27 @@ starts the website again (no re-download), keeping any data you created.
 | Step | Action |
 |------|--------|
 | 1 | Ensures the **.NET 10 runtime** (ASP.NET Core 10.0+) is available; installs one locally into `.dotnet/` if not. |
-| 2 | Downloads the latest release `publish_output*.zip`, extracts it into `publish/`, writes an SQLite `appsettings.Production.json` overlay and creates an empty SQLite database file. |
+| 2 | Loads your saved config (or asks the questions the first time), downloads the latest release `publish_output*.zip`, extracts it into `publish/`, generates `appsettings.Production.json` from your answers and creates an empty SQLite database file. |
 | 3 | Runs `dotnet uTPro.Project.Web.dll` from `publish/` at http://localhost:5000. |
 
-### The SQLite overlay
-The launcher writes `publish/appsettings.Production.json` on top of the release's own
-`appsettings.json`. ASP.NET Core merges it, so only these settings are changed:
+---
+
+## Configuration
+
+On the first run the launcher asks the questions below and saves the answers to
+`sandbox.config` (macOS/Linux) or `sandbox.config.json` (Windows). **Leave any answer blank
+to keep the default.** To change them later, run `run.cmd reconfigure` / `./run.sh reconfigure`
+or just delete the config file.
+
+| Question | Default | Effect |
+|----------|---------|--------|
+| Database connection string | *blank* -> local **SQLite** | Any value switches uTPro to that database (you are also asked for the provider, default `Microsoft.Data.SqlClient`). |
+| Use custom local domains? | No -> **localhost** | If yes, you enter a website URL (`utpro.local`) and backoffice URL (`bo.utpro.local`); the launcher enables uTPro's backoffice domain and adds the names to your hosts file (needs admin/sudo, otherwise it prints the lines to add). |
+| Configure SMTP? | No -> **empty** | If yes, you enter host / port / from / username / password; written to `Umbraco:CMS:Global:Smtp`. |
+| Create the backoffice admin automatically? | No -> **install wizard** | If yes, you enter name / email / password; the launcher enables Umbraco **unattended install** so the admin and schema are created on first boot with no wizard. |
+
+The launcher turns those answers into `publish/appsettings.Production.json`, which ASP.NET
+Core merges over the release's own `appsettings.json`. A default (all-blank) run produces:
 
 ```json
 {
@@ -80,16 +99,13 @@ The launcher writes `publish/appsettings.Production.json` on top of the release'
 }
 ```
 
-- **ConnectionStrings** - switches uTPro from SQL Server to a local SQLite file (absolute
-  path so it resolves no matter where the app is started).
-- **uTPro:Backoffice:Enabled = false** - the release ships with a custom backoffice domain
-  (`bo.utpro.local`); disabling it keeps the backoffice on `localhost`.
-- **Umbraco:CMS:Runtime:Mode = Development** - the release runs in `Production` mode, which
-  refuses to boot without a configured application URL. `Development` relaxes that for a
-  local demo.
+- **Backoffice:Enabled = false** keeps the backoffice on `localhost` (the release ships with
+  a `bo.utpro.local` domain); it is enabled with your URL only if you opt into custom domains.
+- **Runtime:Mode = Development** - the release runs in `Production` mode, which refuses to
+  boot without a configured application URL; `Development` relaxes that for a local demo.
 
-An empty SQLite file is created up front because Umbraco's start-up database probe opens
-the file read-only and would otherwise report a boot failure instead of showing the installer.
+An empty SQLite file is created up front because Umbraco's start-up database probe opens the
+file read-only and would otherwise report a boot failure instead of reaching install.
 
 ---
 
@@ -98,7 +114,8 @@ the file read-only and would otherwise report a boot failure instead of showing 
 | Path | Purpose |
 |------|---------|
 | `run.cmd` / `run.sh` | One-click launchers for Windows / macOS / Linux. |
-| `tools/prepare-sqlite.ps1` | **Windows-only** helper (called by `run.cmd`): download + extract the release, write the SQLite overlay, create the empty database. `run.sh` re-implements the same logic inline in bash, so macOS/Linux do **not** need this file. |
+| `tools/prepare.ps1` | **Windows-only** helper (called by `run.cmd`): runs the config wizard, downloads + extracts the release, generates `appsettings.Production.json`, creates the empty database. `run.sh` re-implements the same logic inline in bash, so macOS/Linux do **not** need this file. |
+| `sandbox.config` / `sandbox.config.json` | Your saved answers (git-ignored; may contain passwords). |
 | `publish/` | Downloaded release output (git-ignored, created at run time). |
 | `.dotnet/` | Locally installed .NET runtime, if the launcher had to fetch one (git-ignored). |
 
@@ -120,9 +137,11 @@ rm -rf publish        # Windows: delete the "publish" folder
 - SQLite is intended for **evaluation / demo / development**, not production. It does not
   handle high write-concurrency well (you may hit `database is locked` under load).
 - The first boot takes longer while Umbraco creates the schema and uSync imports content.
-- To reset the demo completely, delete the `publish/` folder and run again.
-- The launcher runs uTPro's own published host (`uTPro.Project.Web.dll`); the only change
-  applied is the SQLite configuration overlay described above.
+- To reset the demo completely, delete the `publish/` folder (and the config file to be
+  asked the questions again) and run the launcher again.
+- The launcher runs uTPro's own published host (`uTPro.Project.Web.dll`); the only changes
+  applied are in the generated `appsettings.Production.json` described under
+  [Configuration](#configuration).
 
 ---
 
@@ -135,4 +154,5 @@ rm -rf publish        # Windows: delete the "publish" folder
 | **Download is slow or interrupted** | Just re-run the launcher to retry. It only skips downloading once `publish/` contains a complete extract; an interrupted download is re-attempted from the start. |
 | **"unzip: command not found" (Linux)** | Install it, e.g. `sudo apt-get install unzip` (Debian/Ubuntu) or `sudo dnf install unzip` (Fedora). |
 | **Backoffice login won't load** | Make sure you open `http://localhost:5000/umbraco` (not a custom domain); the overlay already disables uTPro's `bo.utpro.local` domain. |
+| **Change your answers** | Run `run.cmd reconfigure` / `./run.sh reconfigure`, or delete the `sandbox.config` / `sandbox.config.json` file. |
 | **Reset the demo** | Delete the `publish/` folder and run the launcher again. |

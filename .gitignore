@@ -10,6 +10,10 @@ publish/
 # --- Locally installed .NET runtime (fetched by the launcher if missing) ---
 .dotnet/
 
+# --- Saved sandbox configuration (may contain SMTP / admin passwords) ---
+sandbox.config
+sandbox.config.json
+
 # --- Downloaded installers / archives ---
 publish_output*.zip
 *.zip

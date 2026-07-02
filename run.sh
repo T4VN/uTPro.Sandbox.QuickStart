@@ -1,28 +1,35 @@
 #!/usr/bin/env bash
 # ====================================================================
 #  uTPro Sandbox (SQLite) - one-click launcher for macOS / Linux
+#  - asks a few config questions the first time (blank = safe defaults),
+#    saves them to sandbox.config so later runs never ask again
 #  - downloads the latest uTPro release PUBLISH asset (pre-built, no build)
-#  - points it at a local SQLite database (via appsettings.Production.json)
-#  - installs the .NET runtime locally if it is missing
-#  - runs the website; re-runs just start it again
+#  - generates appsettings.Production.json (SQLite / custom / SMTP / admin)
+#  - installs the .NET 10 runtime locally if it is missing, then runs
+#
+#  Usage:  ./run.sh              (normal run)
+#          ./run.sh reconfigure  (ask the questions again)
 # ====================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# uTPro targets .NET 10 (Umbraco 17+). If the current release still targets
-# .NET 9 it rolls forward onto the .NET 10 runtime automatically.
+# uTPro targets .NET 10 (Umbraco 17+). A .NET 9 release rolls forward automatically.
 DOTNET_CHANNEL="10.0"
 REPO="T4VN/uTPro"
 PUBLISH_DIR="publish"
 APP_DLL="uTPro.Project.Web.dll"
 APP_URL="http://localhost:5000"
 DOTNET_LOCAL="$(pwd)/.dotnet"
+CONFIG_FILE="sandbox.config"
+
+RECONFIGURE="0"
+[ "${1:-}" = "reconfigure" ] && RECONFIGURE="1"
 
 echo
 echo "==== uTPro Sandbox (SQLite) launcher ===="
 echo
 
-# --- 1/3  Ensure a .NET runtime is available ---
+# --- 1/3  Ensure the .NET 10 runtime is available ---
 DOTNET_CMD="dotnet"
 if command -v dotnet >/dev/null 2>&1 && dotnet --list-runtimes 2>/dev/null | grep -qE "^Microsoft.AspNetCore.App 1[0-9]\."; then
   echo "[1/3] .NET 10 runtime (ASP.NET Core 10.0+) was found."
@@ -39,69 +46,145 @@ else
   export PATH="${DOTNET_LOCAL}:${PATH}"
 fi
 
-# --- 2/3  Download the release + configure SQLite ---
-echo "[2/3] Preparing the uTPro release (SQLite)..."
+# --- 2/3  Configure + download + write settings ---
+echo "[2/3] Preparing the uTPro release..."
 
+ask()    { local v; if [ -n "${2:-}" ]; then read -r -p "$1 [$2]: " v; else read -r -p "$1: " v; fi; echo "${v:-${2:-}}"; }
+ask_yn() { local v; read -r -p "$1 (y/N): " v; case "$v" in y|Y|yes|YES) return 0;; *) return 1;; esac; }
+json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+if [ -f "${CONFIG_FILE}" ] && [ "${RECONFIGURE}" = "0" ]; then
+  echo "      Using existing configuration: ${CONFIG_FILE}"
+  # shellcheck disable=SC1090
+  . "./${CONFIG_FILE}"
+else
+  echo
+  echo "=== uTPro Sandbox configuration (press Enter to accept the default) ==="
+  echo
+  CONNECTION_STRING="$(ask 'Database connection string (blank = local SQLite)' '')"
+  CONNECTION_PROVIDER=""
+  [ -n "${CONNECTION_STRING}" ] && CONNECTION_PROVIDER="$(ask '  Database provider' 'Microsoft.Data.SqlClient')"
+
+  if ask_yn "Use custom local domains instead of localhost?"; then
+    USE_CUSTOM_DOMAINS="true"
+    WEBSITE_URL="$(ask '  Website URL' 'utpro.local')"
+    BACKOFFICE_URL="$(ask '  Backoffice URL' 'bo.utpro.local')"
+  else
+    USE_CUSTOM_DOMAINS="false"; WEBSITE_URL="utpro.local"; BACKOFFICE_URL="bo.utpro.local"
+  fi
+
+  SMTP_HOST=""; SMTP_PORT="587"; SMTP_FROM=""; SMTP_USERNAME=""; SMTP_PASSWORD=""
+  if ask_yn "Configure SMTP (email)?"; then
+    SMTP_HOST="$(ask '  SMTP host' '')"
+    SMTP_PORT="$(ask '  SMTP port' '587')"
+    SMTP_FROM="$(ask '  From address' '')"
+    SMTP_USERNAME="$(ask '  Username' '')"
+    SMTP_PASSWORD="$(ask '  Password' '')"
+  fi
+
+  ADMIN_NAME=""; ADMIN_EMAIL=""; ADMIN_PASSWORD=""
+  if ask_yn "Create the backoffice admin automatically (skip the install wizard)?"; then
+    ADMIN_NAME="$(ask '  Admin name' 'Administrator')"
+    ADMIN_EMAIL="$(ask '  Admin email' '')"
+    ADMIN_PASSWORD="$(ask '  Admin password (min 10 chars)' '')"
+  fi
+
+  cat > "${CONFIG_FILE}" <<EOF
+CONNECTION_STRING="${CONNECTION_STRING}"
+CONNECTION_PROVIDER="${CONNECTION_PROVIDER}"
+USE_CUSTOM_DOMAINS="${USE_CUSTOM_DOMAINS}"
+WEBSITE_URL="${WEBSITE_URL}"
+BACKOFFICE_URL="${BACKOFFICE_URL}"
+SMTP_HOST="${SMTP_HOST}"
+SMTP_PORT="${SMTP_PORT}"
+SMTP_FROM="${SMTP_FROM}"
+SMTP_USERNAME="${SMTP_USERNAME}"
+SMTP_PASSWORD="${SMTP_PASSWORD}"
+ADMIN_NAME="${ADMIN_NAME}"
+ADMIN_EMAIL="${ADMIN_EMAIL}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD}"
+EOF
+  echo "      Saved configuration to ${CONFIG_FILE} (delete it or run './run.sh reconfigure' to change)."
+fi
+
+# Download + extract the release publish asset (once)
 if [ ! -f "${PUBLISH_DIR}/${APP_DLL}" ]; then
   if ! command -v curl >/dev/null 2>&1; then echo "[ERROR] curl is required."; exit 1; fi
-
   echo "      Querying latest uTPro release..."
   ASSET_URL=$(curl -fsSL -H 'User-Agent: uTPro-Sandbox' \
       "https://api.github.com/repos/${REPO}/releases/latest" \
       | grep -o '"browser_download_url"[^,]*publish_output[^"]*\.zip"' \
       | sed -E 's/.*"(https[^"]+)"/\1/' | head -n1)
-  if [ -z "${ASSET_URL}" ]; then echo "[ERROR] Could not find publish_output asset."; exit 1; fi
+  [ -z "${ASSET_URL}" ] && { echo "[ERROR] Could not find publish_output asset."; exit 1; }
   echo "      Downloading $(basename "${ASSET_URL}") ..."
-
   TMP_ZIP="$(mktemp -t utpro-publish.XXXXXX).zip"
   TMP_DIR="$(mktemp -d -t utpro-publish.XXXXXX)"
   curl -fsSL -H 'User-Agent: uTPro-Sandbox' "${ASSET_URL}" -o "${TMP_ZIP}"
-
   echo "      Extracting..."
-  if command -v unzip >/dev/null 2>&1; then
-    unzip -q "${TMP_ZIP}" -d "${TMP_DIR}"
-  else
-    tar -xf "${TMP_ZIP}" -C "${TMP_DIR}"   # bsdtar (macOS) can read zip
-  fi
-
-  # The archive contains a single top-level 'publish_output' folder.
+  if command -v unzip >/dev/null 2>&1; then unzip -q "${TMP_ZIP}" -d "${TMP_DIR}"; else tar -xf "${TMP_ZIP}" -C "${TMP_DIR}"; fi
   ROOT="$(find "${TMP_DIR}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
-  mkdir -p "${PUBLISH_DIR}"
-  cp -R "${ROOT}/." "${PUBLISH_DIR}/"
+  mkdir -p "${PUBLISH_DIR}"; cp -R "${ROOT}/." "${PUBLISH_DIR}/"
   rm -rf "${TMP_ZIP}" "${TMP_DIR}"
   echo "      Publish output ready."
 else
   echo "      Publish output already present."
 fi
 
-# SQLite overlay (absolute path so it works regardless of the working directory)
+# Build appsettings.Production.json from the configuration
 DATA_DIR="$(cd "${PUBLISH_DIR}" && pwd)/umbraco/Data"
 mkdir -p "${DATA_DIR}"
-DB_PATH="${DATA_DIR}/Umbraco.sqlite.db"
+DB_FILE="${DATA_DIR}/Umbraco.sqlite.db"
+USING_SQLITE="0"
+if [ -n "${CONNECTION_STRING}" ]; then
+  CONN="${CONNECTION_STRING}"; PROVIDER="${CONNECTION_PROVIDER:-Microsoft.Data.SqlClient}"
+else
+  CONN="Data Source=${DB_FILE};Cache=Shared;Foreign Keys=True;Pooling=True"; PROVIDER="Microsoft.Data.Sqlite"; USING_SQLITE="1"
+fi
 
-cat > "${PUBLISH_DIR}/appsettings.Production.json" <<JSON
+BACKOFFICE_JSON="\"Backoffice\": { \"Enabled\": ${USE_CUSTOM_DOMAINS}"
+[ "${USE_CUSTOM_DOMAINS}" = "true" ] && BACKOFFICE_JSON="${BACKOFFICE_JSON}, \"Url\": \"$(json_escape "${BACKOFFICE_URL}")\""
+BACKOFFICE_JSON="${BACKOFFICE_JSON} }"
+
+CMS_PARTS="\"Runtime\": { \"Mode\": \"Development\" }"
+if [ -n "${SMTP_HOST}" ]; then
+  SECURE="Auto"; [ "${SMTP_PORT}" = "465" ] && SECURE="SslOnConnect"
+  CMS_PARTS="${CMS_PARTS}, \"Global\": { \"Smtp\": { \"From\": \"$(json_escape "${SMTP_FROM}")\", \"Host\": \"$(json_escape "${SMTP_HOST}")\", \"Port\": ${SMTP_PORT}, \"Username\": \"$(json_escape "${SMTP_USERNAME}")\", \"Password\": \"$(json_escape "${SMTP_PASSWORD}")\", \"SecureSocketOptions\": \"${SECURE}\", \"DeliveryMethod\": \"Network\" } }"
+fi
+if [ -n "${ADMIN_EMAIL}" ]; then
+  CMS_PARTS="${CMS_PARTS}, \"Unattended\": { \"InstallUnattended\": true, \"UnattendedUserName\": \"$(json_escape "${ADMIN_NAME}")\", \"UnattendedUserEmail\": \"$(json_escape "${ADMIN_EMAIL}")\", \"UnattendedUserPassword\": \"$(json_escape "${ADMIN_PASSWORD}")\" }"
+fi
+
+cat > "${PUBLISH_DIR}/appsettings.Production.json" <<EOF
 {
   "ConnectionStrings": {
-    "umbracoDbDSN": "Data Source=${DB_PATH};Cache=Shared;Foreign Keys=True;Pooling=True",
-    "umbracoDbDSN_ProviderName": "Microsoft.Data.Sqlite"
+    "umbracoDbDSN": "$(json_escape "${CONN}")",
+    "umbracoDbDSN_ProviderName": "${PROVIDER}"
   },
-  "uTPro": {
-    "Backoffice": { "Enabled": false }
-  },
-  "Umbraco": {
-    "CMS": {
-      "Runtime": { "Mode": "Development" }
-    }
-  }
+  "uTPro": { ${BACKOFFICE_JSON} },
+  "Umbraco": { "CMS": { ${CMS_PARTS} } }
 }
-JSON
+EOF
 
-# Empty SQLite file so the first boot reaches the installer.
-[ -f "${DB_PATH}" ] || : > "${DB_PATH}"
+# Optional: hosts file entries for the custom domains
+if [ "${USE_CUSTOM_DOMAINS}" = "true" ]; then
+  for d in "${WEBSITE_URL}" "${BACKOFFICE_URL}"; do
+    [ -z "$d" ] && continue
+    if ! grep -qE "[[:space:]]${d}([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
+      if [ -w /etc/hosts ]; then printf '127.0.0.1\t%s\n' "$d" >> /etc/hosts; echo "      Added to /etc/hosts: $d";
+      else echo "      NOTE: add '127.0.0.1 $d' to /etc/hosts (needs sudo)."; fi
+    fi
+  done
+fi
+
+# Empty SQLite file so the first boot reaches install / the installer
+if [ "${USING_SQLITE}" = "1" ] && [ ! -f "${DB_FILE}" ]; then : > "${DB_FILE}"; fi
 
 # --- 3/3  Run the website ---
 echo "[3/3] Starting the website at ${APP_URL}"
 echo "      Open ${APP_URL}/umbraco to finish the first-time install (SQLite)."
+if [ "${USE_CUSTOM_DOMAINS}" = "true" ]; then
+  echo "      Custom domains: http://${WEBSITE_URL}:5000  |  http://${BACKOFFICE_URL}:5000/umbraco"
+fi
 echo "      Press Ctrl+C to stop."
 echo
 export ASPNETCORE_URLS="${APP_URL}"

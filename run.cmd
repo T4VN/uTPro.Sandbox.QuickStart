@@ -16,6 +16,8 @@ set "PUBLISH_DIR=publish"
 set "APP_DLL=uTPro.Project.Web.dll"
 set "APP_URL=http://localhost:5000"
 set "DOTNET_LOCAL=%~dp0.dotnet"
+set "RECONFIGURE="
+if /i "%~1"=="reconfigure" set "RECONFIGURE=-Reconfigure"
 
 echo.
 echo ==== uTPro Sandbox ^(SQLite^) launcher ====
@@ -49,9 +51,9 @@ if "!USE_LOCAL!"=="1" (
   set "PATH=%DOTNET_LOCAL%;%PATH%"
 )
 
-REM --- 2/3  Download the release + configure SQLite ---
-echo [2/3] Preparing the uTPro release ^(SQLite^)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare-sqlite.ps1" -PublishDir "%PUBLISH_DIR%" -AppDll "%APP_DLL%"
+REM --- 2/3  Configure + download the release + write SQLite/custom settings ---
+echo [2/3] Preparing the uTPro release...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare.ps1" -PublishDir "%PUBLISH_DIR%" -AppDll "%APP_DLL%" %RECONFIGURE%
 if errorlevel 1 ( echo [ERROR] Failed to prepare the uTPro release. & pause & exit /b 1 )
 
 REM --- 3/3  Run the website ---
