@@ -37,14 +37,14 @@ the .NET runtime.
 **Windows**
 ```cmd
 git clone https://github.com/T4VN/uTPro.Sandbox.SQLite.git
-cd uTPro.Sandbox.SQLite
+cd uTPro.Sandbox.SQLite\win
 run.cmd
 ```
 
 **macOS / Linux**
 ```bash
 git clone https://github.com/T4VN/uTPro.Sandbox.SQLite.git
-cd uTPro.Sandbox.SQLite
+cd uTPro.Sandbox.SQLite/linux-macos
 chmod +x run.sh
 ./run.sh
 ```
@@ -111,14 +111,26 @@ file read-only and would otherwise report a boot failure instead of reaching ins
 
 ## Files
 
+The launcher scripts are grouped by platform; **all generated files live at the repo root**,
+no matter which platform folder you launch from.
+
+```
+uTPro.Sandbox.SQLite/
+├── win/                 # Windows: run.cmd, uninstall.cmd, prepare.ps1
+├── linux-macos/         # macOS/Linux: run.sh, uninstall.sh
+├── README.md
+├── .gitignore
+└── (generated at run time, git-ignored: publish/  .dotnet/  sandbox.config*)
+```
+
 | Path | Purpose |
 |------|---------|
-| `run.cmd` / `run.sh` | One-click launchers for Windows / macOS / Linux. |
-| `uninstall.cmd` / `uninstall.sh` | Stop the site and delete all generated files (back to a clean git state). |
-| `tools/prepare.ps1` | **Windows-only** helper (called by `run.cmd`): runs the config wizard, downloads + extracts the release, generates `appsettings.Production.json`, creates the empty database. `run.sh` re-implements the same logic inline in bash, so macOS/Linux do **not** need this file. |
-| `sandbox.config` / `sandbox.config.json` | Your saved answers (git-ignored; may contain passwords). |
-| `publish/` | Downloaded release output (git-ignored, created at run time). |
-| `.dotnet/` | Locally installed .NET runtime, if the launcher had to fetch one (git-ignored). |
+| `win/run.cmd` / `linux-macos/run.sh` | One-click launchers for Windows / macOS / Linux. |
+| `win/uninstall.cmd` / `linux-macos/uninstall.sh` | Stop the site and delete all generated files (back to a clean git state). |
+| `win/prepare.ps1` | **Windows-only** helper (called by `run.cmd`): runs the config wizard, downloads + extracts the release, generates `appsettings.Production.json`, creates the empty database. `run.sh` re-implements the same logic inline in bash, so macOS/Linux do **not** need it. |
+| `sandbox.config` / `sandbox.config.json` | Your saved answers, at the repo root (git-ignored; may contain passwords). |
+| `publish/` | Downloaded release output at the repo root (git-ignored, created at run time). |
+| `.dotnet/` | Locally installed .NET runtime at the repo root, if the launcher had to fetch one (git-ignored). |
 
 ---
 
@@ -158,18 +170,20 @@ clean checked-in state), run the uninstall script:
 
 **Windows**
 ```cmd
+cd win
 uninstall.cmd          REM add -y to skip the confirmation prompt
 ```
 
 **macOS / Linux**
 ```bash
+cd linux-macos
 ./uninstall.sh         # add -y to skip the confirmation prompt
 ```
 
 It stops the running uTPro process and deletes `publish/`, `.dotnet/`, the saved
-`sandbox.config` / `sandbox.config.json` and any downloaded archives. Only the
-checked-in files (`run.*`, `uninstall.*`, `tools/`, `README.md`, `.gitignore`) remain, so
-`git status` is clean afterwards. Run `run.cmd` / `./run.sh` again to set it back up.
+`sandbox.config` / `sandbox.config.json` and any downloaded archives (all at the repo root).
+Only the checked-in files remain, so `git status` is clean afterwards. Run the launcher
+again to set it back up.
 
 ---
 
@@ -190,10 +204,11 @@ checked-in files (`run.*`, `uninstall.*`, `tools/`, `README.md`, `.gitignore`) r
 
 | Symptom | Fix |
 |---------|-----|
-| **Port 5000 already in use** | Edit `APP_URL` at the top of `run.cmd` / `run.sh` to another port (e.g. `http://localhost:5080`). |
-| **`run.sh: Permission denied`** | Run `chmod +x run.sh` first. |
+| **Port 5000 already in use** | Edit `APP_URL` at the top of `win\run.cmd` / `linux-macos/run.sh` to another port (e.g. `http://localhost:5080`). |
+| **`run.sh: Permission denied`** | Run `chmod +x linux-macos/run.sh` first. |
 | **Download is slow or interrupted** | Just re-run the launcher to retry. It only skips downloading once `publish/` contains a complete extract; an interrupted download is re-attempted from the start. |
 | **"unzip: command not found" (Linux)** | Install it, e.g. `sudo apt-get install unzip` (Debian/Ubuntu) or `sudo dnf install unzip` (Fedora). |
 | **Backoffice login won't load** | Make sure you open `http://localhost:5000/umbraco` (not a custom domain); the overlay already disables uTPro's `bo.utpro.local` domain. |
-| **Change your answers** | Run `run.cmd reconfigure` / `./run.sh reconfigure`, or delete the `sandbox.config` / `sandbox.config.json` file. |
+| **Change your answers** | Run `run.cmd reconfigure` / `./run.sh reconfigure` from the platform folder, or delete the `sandbox.config` / `sandbox.config.json` file at the repo root. |
+| **Reset the demo** | Delete the `publish/` folder and run the launcher again. |
 | **Reset the demo** | Delete the `publish/` folder and run the launcher again. |
