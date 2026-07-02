@@ -122,6 +122,24 @@ file read-only and would otherwise report a boot failure instead of reaching ins
 
 ---
 
+## What you can do in this quickstart
+
+This sandbox runs the **pre-built** uTPro release (no compiler on the machine), which keeps
+it fast to start. That means:
+
+- ✅ **Browse and edit content**, media, and settings in the backoffice.
+- ✅ **Edit existing templates / views** (`.cshtml`) right in the backoffice - changes are
+  recompiled at runtime (thanks to `Runtime:Mode=Development`), no rebuild needed.
+- ✅ All existing document types already have their strongly-typed models compiled into the
+  shipped assemblies, so the existing site renders normally.
+- ⚠️ **Creating a brand-new document type** works, but it won't get a strongly-typed
+  ModelsBuilder model (the release runs `ModelsMode=Nothing` and there is no SDK to
+  regenerate/compile one). Templates for new types can still use dynamic access such as
+  `Model.Value("alias")`. Full typed-model + document-type development needs the source +
+  .NET SDK build flow, which is outside the scope of this quickstart.
+
+---
+
 ## Updating to a newer uTPro release
 
 The launcher always downloads the **latest** release. To refresh, delete the downloaded
