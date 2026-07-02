@@ -8,7 +8,8 @@
 #          ./uninstall.sh -y     (no prompt)
 # ====================================================================
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in linux-macos/ ; clean up generated files at the repo ROOT (parent).
+cd "$(dirname "$0")/.."
 
 FORCE="0"
 case "${1:-}" in -y|--yes|force) FORCE="1";; esac

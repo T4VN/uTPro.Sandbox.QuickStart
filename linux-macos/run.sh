@@ -11,7 +11,8 @@
 #          ./run.sh reconfigure  (ask the questions again)
 # ====================================================================
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in linux-macos/ ; all generated files stay at the repo ROOT (parent).
+cd "$(dirname "$0")/.."
 
 # uTPro targets .NET 10 (Umbraco 17+). A .NET 9 release rolls forward automatically.
 DOTNET_CHANNEL="10.0"

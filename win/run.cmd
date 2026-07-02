@@ -7,7 +7,8 @@ REM  - installs the .NET runtime locally if it is missing
 REM  - runs the website; re-runs just start it again
 REM ====================================================================
 setlocal EnableExtensions EnableDelayedExpansion
-cd /d "%~dp0"
+REM Scripts live in win\ ; all generated files stay at the repo ROOT (parent).
+cd /d "%~dp0.."
 
 REM uTPro targets .NET 10 (Umbraco 17+). If the current release still targets
 REM .NET 9 it rolls forward onto the .NET 10 runtime automatically.
@@ -15,7 +16,7 @@ set "DOTNET_CHANNEL=10.0"
 set "PUBLISH_DIR=publish"
 set "APP_DLL=uTPro.Project.Web.dll"
 set "APP_URL=http://localhost:5000"
-set "DOTNET_LOCAL=%~dp0.dotnet"
+set "DOTNET_LOCAL=%CD%\.dotnet"
 set "RECONFIGURE="
 if /i "%~1"=="reconfigure" set "RECONFIGURE=-Reconfigure"
 
@@ -53,7 +54,7 @@ if "!USE_LOCAL!"=="1" (
 
 REM --- 2/3  Configure + download the release + write SQLite/custom settings ---
 echo [2/3] Preparing the uTPro release...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\prepare.ps1" -PublishDir "%PUBLISH_DIR%" -AppDll "%APP_DLL%" %RECONFIGURE%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare.ps1" -PublishDir "%PUBLISH_DIR%" -AppDll "%APP_DLL%" %RECONFIGURE%
 if errorlevel 1 ( echo [ERROR] Failed to prepare the uTPro release. & pause & exit /b 1 )
 
 REM --- 3/3  Run the website ---
