@@ -1,4 +1,4 @@
-# uTPro Sandbox (SQLite)
+# uTPro Sandbox (SQLite default)
 
 A ready-to-run demo of [uTPro](https://github.com/T4VN/uTPro) that runs on **SQLite**
 instead of SQL Server, so you can try the full uTPro site on **Windows, macOS or Linux**
