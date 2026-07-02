@@ -114,6 +114,7 @@ file read-only and would otherwise report a boot failure instead of reaching ins
 | Path | Purpose |
 |------|---------|
 | `run.cmd` / `run.sh` | One-click launchers for Windows / macOS / Linux. |
+| `uninstall.cmd` / `uninstall.sh` | Stop the site and delete all generated files (back to a clean git state). |
 | `tools/prepare.ps1` | **Windows-only** helper (called by `run.cmd`): runs the config wizard, downloads + extracts the release, generates `appsettings.Production.json`, creates the empty database. `run.sh` re-implements the same logic inline in bash, so macOS/Linux do **not** need this file. |
 | `sandbox.config` / `sandbox.config.json` | Your saved answers (git-ignored; may contain passwords). |
 | `publish/` | Downloaded release output (git-ignored, created at run time). |
@@ -129,6 +130,28 @@ output and run again:
 ```bash
 rm -rf publish        # Windows: delete the "publish" folder
 ```
+
+---
+
+## Uninstall / clean up
+
+To stop the site and remove everything the launcher generated (returning the folder to its
+clean checked-in state), run the uninstall script:
+
+**Windows**
+```cmd
+uninstall.cmd          REM add -y to skip the confirmation prompt
+```
+
+**macOS / Linux**
+```bash
+./uninstall.sh         # add -y to skip the confirmation prompt
+```
+
+It stops the running uTPro process and deletes `publish/`, `.dotnet/`, the saved
+`sandbox.config` / `sandbox.config.json` and any downloaded archives. Only the
+checked-in files (`run.*`, `uninstall.*`, `tools/`, `README.md`, `.gitignore`) remain, so
+`git status` is clean afterwards. Run `run.cmd` / `./run.sh` again to set it back up.
 
 ---
 
