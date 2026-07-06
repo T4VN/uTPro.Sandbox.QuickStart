@@ -8,7 +8,8 @@ REM  Usage:  uninstall.cmd        (asks for confirmation)
 REM          uninstall.cmd -y     (no prompt)
 REM ====================================================================
 setlocal EnableExtensions EnableDelayedExpansion
-cd /d "%~dp0"
+REM Scripts live in win\ ; clean up generated files at the repo ROOT (parent).
+cd /d "%~dp0.."
 
 set "FORCE="
 if /i "%~1"=="-y"     set "FORCE=1"
