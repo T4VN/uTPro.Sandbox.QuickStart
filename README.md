@@ -154,8 +154,28 @@ it fast to start. That means:
 
 ## Updating to a newer uTPro release
 
-The launcher always downloads the **latest** release. To refresh, delete the downloaded
-output and run again:
+The launcher records which release it installed in a marker file (`publish/.utpro-release`).
+On every run it asks GitHub for the **latest** release tag and compares it with the installed
+one:
+
+- **First run** - downloads the latest release and stamps the version.
+- **Same version** - just starts the existing site (no download).
+- **Newer version available** - shows the installed vs. latest version and asks what to do:
+
+  | Choice | Action | Your data |
+  |--------|--------|-----------|
+  | **[1] Update and RESET** | Uninstalls the old version and installs the latest as a **clean** install. Asks for confirmation first. | ⚠️ **Deleted** (database + media) |
+  | **[2] Keep current version** *(default)* | Skips the update and runs the version you already have. | ✅ Kept |
+  | **[3] Update and KEEP data** | Installs the latest release but preserves your existing database and uploaded media. | ✅ Kept |
+
+If GitHub can't be reached (offline), the launcher skips the check and runs the existing
+`publish/` output.
+
+The data preserved by choice **[3]** (and wiped by **[1]**) is: `publish/umbraco/Data`
+(the SQLite database) and any media under `publish/wwwroot/media` or `publish/media`.
+
+You can still force a fully clean re-download at any time by deleting the output and running
+again:
 
 ```bash
 rm -rf publish        # Windows: delete the "publish" folder
@@ -211,4 +231,4 @@ again to set it back up.
 | **Backoffice login won't load** | Make sure you open `http://localhost:5000/umbraco` (not a custom domain); the overlay already disables uTPro's `bo.utpro.local` domain. |
 | **Change your answers** | Run `run.cmd reconfigure` / `./run.sh reconfigure` from the platform folder, or delete the `sandbox.config` / `sandbox.config.json` file at the repo root. |
 | **Reset the demo** | Delete the `publish/` folder and run the launcher again. |
-| **Reset the demo** | Delete the `publish/` folder and run the launcher again. |
+| **Update to a newer release** | Just run the launcher; if a newer release exists it offers to update (keeping or resetting your data). See [Updating to a newer uTPro release](#updating-to-a-newer-utpro-release). |

@@ -14,12 +14,16 @@ param(
     [string]$PublishDir = 'publish',
     [string]$AppDll = 'uTPro.Project.Web.dll',
     [string]$ConfigFile = 'sandbox.config.json',
+    [string]$VersionFile = '.utpro-release',
     [switch]$Reconfigure
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $headers = @{ 'User-Agent' = 'uTPro-Sandbox' }
+
+# Data folders (relative to publish/) preserved by an "update but keep data" refresh.
+$DataPaths = @('umbraco\Data', 'wwwroot\media', 'media')
 
 function Ask([string]$prompt, [string]$default = '') {
     $label = if ($default) { "$prompt [$default]" } else { $prompt }
@@ -29,6 +33,70 @@ function Ask([string]$prompt, [string]$default = '') {
 function AskYesNo([string]$prompt) {
     $value = Read-Host "$prompt (y/N)"
     return ($value -match '^(y|yes)$')
+}
+
+# Version tag currently installed (from the marker file), or $null if unknown / not installed.
+function Get-InstalledVersion([string]$publishFull, [string]$versionFile) {
+    $marker = Join-Path $publishFull $versionFile
+    if (Test-Path $marker) { return (Get-Content $marker -Raw).Trim() }
+    return $null
+}
+
+# Download the given release's publish_output asset and lay it down in publish/.
+# -PreserveData copies umbraco\Data / media back over the fresh extract (keep DB + uploads).
+function Install-Release($release, [string]$publishFull, [string]$appDll, [string]$versionFile, $dataPaths, $headers, [switch]$PreserveData) {
+    $asset = $release.assets | Where-Object { $_.name -like 'publish_output*.zip' } | Select-Object -First 1
+    if ($null -eq $asset) { throw "No 'publish_output*.zip' asset found on release $($release.tag_name)." }
+
+    $guid   = [guid]::NewGuid().ToString('N')
+    $tmpZip = Join-Path $env:TEMP "utpro-publish-$guid.zip"
+    $tmpDir = Join-Path $env:TEMP "utpro-publish-$guid"
+    $bakDir = Join-Path $env:TEMP "utpro-data-$guid"
+
+    Write-Host "Downloading $($asset.name) ($([math]::Round($asset.size/1MB)) MB)..."
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpZip -Headers $headers -TimeoutSec 1800
+
+    Write-Host "Extracting..."
+    Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
+    $root = Get-ChildItem -Path $tmpDir -Directory | Select-Object -First 1
+    if ($null -eq $root) { throw "Unexpected archive layout." }
+
+    # Back up the data folders before we wipe the old publish output.
+    if ($PreserveData -and (Test-Path $publishFull)) {
+        foreach ($rel in $dataPaths) {
+            $src = Join-Path $publishFull $rel
+            if (Test-Path $src) {
+                $dst = Join-Path $bakDir $rel
+                New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+                Copy-Item -Path $src -Destination $dst -Recurse -Force
+            }
+        }
+    }
+
+    # Replace the publish folder with the fresh extract.
+    if (Test-Path $publishFull) { Remove-Item $publishFull -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $publishFull | Out-Null
+    Copy-Item -Path (Join-Path $root.FullName '*') -Destination $publishFull -Recurse -Force
+
+    # Restore the preserved data on top of the new release.
+    if ($PreserveData -and (Test-Path $bakDir)) {
+        foreach ($rel in $dataPaths) {
+            $src = Join-Path $bakDir $rel
+            if (Test-Path $src) {
+                $dst = Join-Path $publishFull $rel
+                if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+                New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+                Copy-Item -Path $src -Destination $dst -Recurse -Force
+            }
+        }
+    }
+
+    # Stamp the folder with the release tag so later runs can detect updates.
+    Set-Content -Path (Join-Path $publishFull $versionFile) -Value $release.tag_name -Encoding UTF8 -NoNewline
+
+    Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $bakDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # --- 1. Load or create the configuration -----------------------------------------
@@ -85,36 +153,80 @@ else {
     Write-Host "Saved configuration to $ConfigFile (delete it or run with 'reconfigure' to change)."
 }
 
-# --- 2. Download + extract the release publish asset (once) ----------------------
+# --- 2. Download / update the release publish asset (with version check) ---------
 $publishFull = [System.IO.Path]::GetFullPath($PublishDir)
-if (-not (Test-Path (Join-Path $publishFull $AppDll))) {
+$installed   = if (Test-Path (Join-Path $publishFull $AppDll)) { $true } else { $false }
+$installedTag = Get-InstalledVersion $publishFull $VersionFile
+
+# Ask GitHub for the latest release tag (used both for a fresh install and the update check).
+$release = $null
+try {
     Write-Host "Querying latest uTPro release..."
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers $headers
     Write-Host "Latest release: $($release.tag_name)"
+}
+catch {
+    if (-not $installed) { throw "Could not query the latest uTPro release: $($_.Exception.Message)" }
+    Write-Host "WARNING: could not check for updates ($($_.Exception.Message)). Using the existing publish output."
+}
 
-    $asset = $release.assets | Where-Object { $_.name -like 'publish_output*.zip' } | Select-Object -First 1
-    if ($null -eq $asset) { throw "No 'publish_output*.zip' asset found on release $($release.tag_name)." }
-
-    $guid   = [guid]::NewGuid().ToString('N')
-    $tmpZip = Join-Path $env:TEMP "utpro-publish-$guid.zip"
-    $tmpDir = Join-Path $env:TEMP "utpro-publish-$guid"
-
-    Write-Host "Downloading $($asset.name) ($([math]::Round($asset.size/1MB)) MB)..."
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpZip -Headers $headers -TimeoutSec 1800
-
-    Write-Host "Extracting..."
-    Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
-    $root = Get-ChildItem -Path $tmpDir -Directory | Select-Object -First 1
-    if ($null -eq $root) { throw "Unexpected archive layout." }
-
-    New-Item -ItemType Directory -Force -Path $publishFull | Out-Null
-    Copy-Item -Path (Join-Path $root.FullName '*') -Destination $publishFull -Recurse -Force
-    Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
-    Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "Publish output ready in $publishFull"
+if (-not $installed) {
+    # Fresh install: download the latest release and stamp the version.
+    Install-Release $release $publishFull $AppDll $VersionFile $DataPaths $headers
+    Write-Host "Publish output ready in $publishFull (version $($release.tag_name))."
+}
+elseif ($null -eq $release) {
+    # Offline / API failure but we already have a build: just run it.
+    Write-Host "Publish output already present (version $(if ($installedTag) { $installedTag } else { 'unknown' }))."
+}
+elseif (-not $installedTag) {
+    # Existing build from before version tracking: assume it is current and stamp it,
+    # so future runs can detect updates. Do not force an update this run.
+    Set-Content -Path (Join-Path $publishFull $VersionFile) -Value $release.tag_name -Encoding UTF8 -NoNewline
+    Write-Host "Publish output already present (marked as version $($release.tag_name))."
+}
+elseif ($installedTag -eq $release.tag_name) {
+    # Up to date: nothing to download.
+    Write-Host "Publish output already present and up to date (version $installedTag)."
 }
 else {
-    Write-Host "Publish output already present."
+    # An update is available: let the user choose what to do.
+    Write-Host ""
+    Write-Host "================================================================"
+    Write-Host "  A new uTPro release is available!"
+    Write-Host "    Installed: $installedTag"
+    Write-Host "    Latest   : $($release.tag_name)"
+    Write-Host "================================================================"
+    Write-Host "  [1] Update and RESET     - uninstall the old version and DELETE ALL DATA"
+    Write-Host "                              (database + media), then install $($release.tag_name) clean."
+    Write-Host "  [2] Keep current version - do NOT update; keep your data and run $installedTag as-is."
+    Write-Host "  [3] Update and KEEP data - install $($release.tag_name) but keep your existing"
+    Write-Host "                              data (database + media)."
+    Write-Host ""
+    $choice = Ask "Choose [1/2/3]" "2"
+
+    switch ($choice) {
+        '1' {
+            Write-Host ""
+            Write-Host "WARNING: this permanently removes the current database and uploaded media." -ForegroundColor Yellow
+            if (AskYesNo "Are you sure you want to reset and update to $($release.tag_name)?") {
+                Write-Host "Uninstalling the old version and installing $($release.tag_name) (clean)..."
+                Install-Release $release $publishFull $AppDll $VersionFile $DataPaths $headers
+                Write-Host "Updated to $($release.tag_name) (data reset)."
+            }
+            else {
+                Write-Host "Update cancelled. Keeping the current version ($installedTag)."
+            }
+        }
+        '3' {
+            Write-Host "Updating to $($release.tag_name) while keeping your data..."
+            Install-Release $release $publishFull $AppDll $VersionFile $DataPaths $headers -PreserveData
+            Write-Host "Updated to $($release.tag_name) (data kept)."
+        }
+        default {
+            Write-Host "Keeping the current version ($installedTag). Your data is unchanged."
+        }
+    }
 }
 
 # --- 3. Build appsettings.Production.json from the configuration ------------------

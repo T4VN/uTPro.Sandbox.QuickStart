@@ -22,6 +22,9 @@ APP_DLL="uTPro.Project.Web.dll"
 APP_URL="http://localhost:5000"
 DOTNET_LOCAL="$(pwd)/.dotnet"
 CONFIG_FILE="sandbox.config"
+VERSION_FILE=".utpro-release"
+# Data folders (relative to publish/) preserved by an "update but keep data" refresh.
+DATA_PATHS=("umbraco/Data" "wwwroot/media" "media")
 
 RECONFIGURE="0"
 [ "${1:-}" = "reconfigure" ] && RECONFIGURE="1"
@@ -108,27 +111,117 @@ EOF
   echo "      Saved configuration to ${CONFIG_FILE} (delete it or run './run.sh reconfigure' to change)."
 fi
 
-# Download + extract the release publish asset (once)
-if [ ! -f "${PUBLISH_DIR}/${APP_DLL}" ]; then
+# Download / update the release publish asset (with version check)
+
+# Version tag currently installed (from the marker file), or empty if unknown / not installed.
+get_installed_version() {
+  [ -f "${PUBLISH_DIR}/${VERSION_FILE}" ] && tr -d '[:space:]' < "${PUBLISH_DIR}/${VERSION_FILE}" || true
+}
+
+# Download the ${ASSET_URL} publish asset and lay it down in publish/.
+# Arg1: preserve data (1 = keep umbraco/Data + media, 0 = clean install).
+install_release() {
+  local preserve="$1"
   if ! command -v curl >/dev/null 2>&1; then echo "[ERROR] curl is required."; exit 1; fi
-  echo "      Querying latest uTPro release..."
-  ASSET_URL=$(curl -fsSL -H 'User-Agent: uTPro-Sandbox' \
-      "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -o '"browser_download_url"[^,]*publish_output[^"]*\.zip"' \
-      | sed -E 's/.*"(https[^"]+)"/\1/' | head -n1)
   [ -z "${ASSET_URL}" ] && { echo "[ERROR] Could not find publish_output asset."; exit 1; }
   echo "      Downloading $(basename "${ASSET_URL}") ..."
+  local TMP_ZIP TMP_DIR BAK_DIR ROOT rel
   TMP_ZIP="$(mktemp -t utpro-publish.XXXXXX).zip"
   TMP_DIR="$(mktemp -d -t utpro-publish.XXXXXX)"
+  BAK_DIR="$(mktemp -d -t utpro-data.XXXXXX)"
   curl -fsSL -H 'User-Agent: uTPro-Sandbox' "${ASSET_URL}" -o "${TMP_ZIP}"
   echo "      Extracting..."
   if command -v unzip >/dev/null 2>&1; then unzip -q "${TMP_ZIP}" -d "${TMP_DIR}"; else tar -xf "${TMP_ZIP}" -C "${TMP_DIR}"; fi
   ROOT="$(find "${TMP_DIR}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
-  mkdir -p "${PUBLISH_DIR}"; cp -R "${ROOT}/." "${PUBLISH_DIR}/"
-  rm -rf "${TMP_ZIP}" "${TMP_DIR}"
-  echo "      Publish output ready."
+
+  # Back up the data folders before wiping the old publish output.
+  if [ "${preserve}" = "1" ] && [ -d "${PUBLISH_DIR}" ]; then
+    for rel in "${DATA_PATHS[@]}"; do
+      if [ -e "${PUBLISH_DIR}/${rel}" ]; then
+        mkdir -p "${BAK_DIR}/$(dirname "${rel}")"
+        cp -R "${PUBLISH_DIR}/${rel}" "${BAK_DIR}/${rel}"
+      fi
+    done
+  fi
+
+  # Replace the publish folder with the fresh extract.
+  rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cp -R "${ROOT}/." "${PUBLISH_DIR}/"
+
+  # Restore the preserved data on top of the new release.
+  if [ "${preserve}" = "1" ]; then
+    for rel in "${DATA_PATHS[@]}"; do
+      if [ -e "${BAK_DIR}/${rel}" ]; then
+        mkdir -p "${PUBLISH_DIR}/$(dirname "${rel}")"
+        rm -rf "${PUBLISH_DIR}/${rel}"
+        cp -R "${BAK_DIR}/${rel}" "${PUBLISH_DIR}/${rel}"
+      fi
+    done
+  fi
+
+  # Stamp the folder with the release tag so later runs can detect updates.
+  printf '%s' "${LATEST_TAG}" > "${PUBLISH_DIR}/${VERSION_FILE}"
+  rm -rf "${TMP_ZIP}" "${TMP_DIR}" "${BAK_DIR}"
+}
+
+INSTALLED_TAG="$(get_installed_version)"
+LATEST_TAG=""; ASSET_URL=""
+if command -v curl >/dev/null 2>&1; then
+  API_JSON="$(curl -fsSL -H 'User-Agent: uTPro-Sandbox' "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
+  LATEST_TAG="$(printf '%s' "${API_JSON}" | grep -o '"tag_name"[^,]*' | head -n1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)"
+  ASSET_URL="$(printf '%s' "${API_JSON}" | grep -o '"browser_download_url"[^,]*publish_output[^"]*\.zip"' | sed -E 's/.*"(https[^"]+)"/\1/' | head -n1 || true)"
+fi
+
+if [ ! -f "${PUBLISH_DIR}/${APP_DLL}" ]; then
+  # Fresh install: download the latest release and stamp the version.
+  [ -z "${LATEST_TAG}" ] && { echo "[ERROR] Could not query the latest uTPro release."; exit 1; }
+  echo "      Latest release: ${LATEST_TAG}"
+  install_release 0
+  echo "      Publish output ready (version ${LATEST_TAG})."
+elif [ -z "${LATEST_TAG}" ]; then
+  # Offline / API failure but we already have a build: just run it.
+  echo "      WARNING: could not check for updates. Using the existing publish output (version ${INSTALLED_TAG:-unknown})."
+elif [ -z "${INSTALLED_TAG}" ]; then
+  # Existing build from before version tracking: stamp it as current, do not force an update.
+  printf '%s' "${LATEST_TAG}" > "${PUBLISH_DIR}/${VERSION_FILE}"
+  echo "      Publish output already present (marked as version ${LATEST_TAG})."
+elif [ "${INSTALLED_TAG}" = "${LATEST_TAG}" ]; then
+  echo "      Publish output already present and up to date (version ${INSTALLED_TAG})."
 else
-  echo "      Publish output already present."
+  # An update is available: let the user choose what to do.
+  echo
+  echo "================================================================"
+  echo "  A new uTPro release is available!"
+  echo "    Installed: ${INSTALLED_TAG}"
+  echo "    Latest   : ${LATEST_TAG}"
+  echo "================================================================"
+  echo "  [1] Update and RESET     - uninstall the old version and DELETE ALL DATA"
+  echo "                             (database + media), then install ${LATEST_TAG} clean."
+  echo "  [2] Keep current version - do NOT update; keep your data and run ${INSTALLED_TAG} as-is."
+  echo "  [3] Update and KEEP data - install ${LATEST_TAG} but keep your existing"
+  echo "                             data (database + media)."
+  echo
+  CHOICE="$(ask 'Choose [1/2/3]' '2')"
+  case "${CHOICE}" in
+    1)
+      echo
+      echo "WARNING: this permanently removes the current database and uploaded media."
+      if ask_yn "Are you sure you want to reset and update to ${LATEST_TAG}?"; then
+        echo "      Uninstalling the old version and installing ${LATEST_TAG} (clean)..."
+        install_release 0
+        echo "      Updated to ${LATEST_TAG} (data reset)."
+      else
+        echo "      Update cancelled. Keeping the current version (${INSTALLED_TAG})."
+      fi
+      ;;
+    3)
+      echo "      Updating to ${LATEST_TAG} while keeping your data..."
+      install_release 1
+      echo "      Updated to ${LATEST_TAG} (data kept)."
+      ;;
+    *)
+      echo "      Keeping the current version (${INSTALLED_TAG}). Your data is unchanged."
+      ;;
+  esac
 fi
 
 # Build appsettings.Production.json from the configuration
