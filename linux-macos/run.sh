@@ -200,7 +200,7 @@ else
   echo "  [3] Update and KEEP data - install ${LATEST_TAG} but keep your existing"
   echo "                             data (database + media)."
   echo
-  CHOICE="$(ask 'Choose [1/2/3]' '2')"
+  CHOICE="$(ask 'Choose [1/2/3]' 'default: 2')"
   case "${CHOICE}" in
     1)
       echo

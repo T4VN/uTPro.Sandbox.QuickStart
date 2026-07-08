@@ -203,7 +203,7 @@ else {
     Write-Host "  [3] Update and KEEP data - install $($release.tag_name) but keep your existing"
     Write-Host "                              data (database + media)."
     Write-Host ""
-    $choice = Ask "Choose [1/2/3]" "2"
+    $choice = Ask "Choose [1/2/3]" "default: 2"
 
     switch ($choice) {
         '1' {
